@@ -27,7 +27,7 @@ class ui_model(QtWidgets.QMainWindow, Ui_MainWindow):
 		self.pushButton.clicked.connect(self.load_image)
 
 		# select object
-		self.comboBox.activated.connect(self.show_result)
+		self.comboBox.activated.connect(self.combobox_update_view)
 
 	def load_model(self):
 		return DummyModel(self.opt)
@@ -55,7 +55,17 @@ class ui_model(QtWidgets.QMainWindow, Ui_MainWindow):
 		self.show_result()
 
 	def update_combobox(self, no_of_objects):
-		pass
+		self.comboBox.clear()       # delete all items from comboBox
+		list_obj = list(range(no_of_objects))
+		combo_list = ['all'] + [str(i) for i in list_obj]
+		self.comboBox.addItems(combo_list)
+
+	def combobox_update_view(self):
+		self.obj_id = self.comboBox.currentIndex() - 1
+		if self.obj_id < 0:
+			self.obj_id = 0
+		print(self.obj_id)
+		self.show_result()
 
 	def show_result(self):
 		show_images = []
