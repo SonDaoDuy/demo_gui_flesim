@@ -11,6 +11,7 @@ class ui_model(QtWidgets.QMainWindow, Ui_MainWindow):
 		# MainWindow = QtWidgets.QMainWindow()
 		self.setupUi(self)
 		self.opt = opt
+		self.opt.anno_file = 'C:\\Users\\Son\\Desktop\\demo_gui\\data\\sosc\\sosc_train.json'
 		print(self.opt)
 		self.opt.loadSize = [512, 512]
 		self.graphicsView.setMaximumSize(self.opt.loadSize[0], self.opt.loadSize[1])
@@ -20,7 +21,7 @@ class ui_model(QtWidgets.QMainWindow, Ui_MainWindow):
 		self.graphicsView_5.setMaximumSize(self.opt.loadSize[0], self.opt.loadSize[1])
 		self.graphicsView_6.setMaximumSize(self.opt.loadSize[0], self.opt.loadSize[1])
 		# model and data info
-		self.model = self.load_model()
+		self.model = self.load_model(self.opt.anno_file)
 
 		# button connection
 		# load image
@@ -29,8 +30,23 @@ class ui_model(QtWidgets.QMainWindow, Ui_MainWindow):
 		# select object
 		self.comboBox.activated.connect(self.combobox_update_view)
 
-	def load_model(self):
-		return DummyModel(self.opt)
+		# visibility
+		self.pushButton_3.clicked.connect(self.turn_on_off)
+
+		#position
+		self.move_step = 10
+		self.pushButton_2.clicked.connect(self.move_up)
+		self.pushButton_4.clicked.connect(self.move_down)
+		self.pushButton_5.clicked.connect(self.move_left)
+		self.pushButton_6.clicked.connect(self.move_right)
+
+		#zoom (not actualy zoom)
+		self.zoom_step = 10
+		self.pushButton_7.clicked.connect(self.zoom_in)
+		self.pushButton_8.clicked.connect(self.zoom_out)
+
+	def load_model(self, anno_file):
+		return DummyModel(self.opt, anno_file)
 
 	def load_image(self, obj_id=None):
 		self.fname, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'select the image', self.opt.img_file, 'Image files(*.jpg *.png)')
@@ -47,10 +63,11 @@ class ui_model(QtWidgets.QMainWindow, Ui_MainWindow):
 		# get output from model
 		self.output = self.model.forward(self.input, file_name)
 		# update combo_box
-		no_of_objects = len(self.output['f_rgb'])
-		self.update_combobox(no_of_objects)
-		# self.obj_id = self.comboBox.currentIndex()
+		self.no_of_objects = len(self.output['f_rgb'])
+		self.update_combobox(self.no_of_objects)
 		self.obj_id = 0
+		# update visibility
+		self.visibility = np.ones(self.no_of_objects) # all on
 		# display
 		self.show_result()
 
@@ -128,7 +145,14 @@ class ui_model(QtWidgets.QMainWindow, Ui_MainWindow):
 		return depth_pil
 
 	def make_recompose_img(self):
-		return self.original_img
+		depth_list = []
+		rgb_list = []
+		for i in range(self.no_of_objects):
+			if self.visibility[i] == 1:
+				depth_list.append(self.output['f_depth'][i])
+				rgb_list.append(self.output['f_rgb'][i])
+		_, recompose_img = self.min_depth_pooling(depth_list, rgb_list)
+		return recompose_img
 
 	def make_single_rgb(self):
 		return Image.fromarray(self.output['f_rgb'][self.obj_id])
@@ -139,10 +163,170 @@ class ui_model(QtWidgets.QMainWindow, Ui_MainWindow):
 		depth_pil = Image.fromarray(depth_img.astype(np.uint8))
 		return depth_pil
 
-	def setup_view(self, graphicsView, image):
-		imageQt = ImageQt.ImageQt(image)
-		graphicsView.scene = QtWidgets.QGraphicsScene()
-		item = QtWidgets.QGraphicsPixmapItem(QtGui.QPixmap.fromImage(imageQt)) 
-		graphicsView.scene.addItem(item)
-		graphicsView.setScene(self.graphicsView.scene)
-		
+	def min_depth_pooling(self, depth, rgbs):
+		depth = np.array(depth)
+		depth = np.where(depth == 0, np.ones_like(depth)*(2**16-1), depth)
+		min_depth = np.min(depth, axis=0)
+		min_index = np.where(depth == min_depth)
+		index = np.zeros_like(depth).astype(np.uint8)
+		index[min_index] = 1
+		rgb_value = np.zeros_like(rgbs[0])
+		index_unique = np.zeros((512, 512, 1)).astype(np.uint8)
+		for i, rgb in enumerate(rgbs):
+			index_each = index[i,:,:].reshape(512, 512, 1) * (1-index_unique)
+			rgb_value += index_each * rgb
+			index_unique += index_each
+		min_depth = np.where(min_depth == (2**16 -1), np.zeros_like(min_depth), min_depth)
+		min_depth = Image.fromarray(min_depth.astype(np.uint16))
+		r_rgb = Image.fromarray(rgb_value)
+		return min_depth, r_rgb
+
+	def turn_on_off(self):
+		#update visibility
+		if self.visibility[self.obj_id] == 1:
+			self.visibility[self.obj_id] = 0
+		else:
+			self.visibility[self.obj_id] = 1
+		self.show_result()
+
+	def move_up(self):
+		#update bbox
+		old_bbox = self.output['bbox'][self.obj_id].copy()
+		self.output['bbox'][self.obj_id][1] -= self.move_step
+		self.output['bbox'][self.obj_id][3] -= self.move_step
+		new_bbox = self.output['bbox'][self.obj_id]
+		# bbox[1] += self.move_step
+		# bbox[3] += self.move_step
+		# self.output['bbox'][self.obj_id] = bbox
+		print(old_bbox)
+		print(self.output['bbox'][self.obj_id])
+
+		#update object depth map
+		object_depth = self.output['f_depth'][self.obj_id].copy()
+		depth_map = np.zeros(np.shape(object_depth)).astype(np.uint16)
+		depth_map[new_bbox[1]:new_bbox[3], new_bbox[0]:new_bbox[2]] = \
+			object_depth[old_bbox[1]:old_bbox[3], old_bbox[0]:old_bbox[2]]
+		self.output['f_depth'][self.obj_id] = depth_map
+
+		#update object rgb????
+		object_rgb = self.output['f_rgb'][self.obj_id].copy()
+		rgb = np.zeros(np.shape(object_rgb))
+		rgb[new_bbox[1]:new_bbox[3], new_bbox[0]:new_bbox[2], :] = \
+			object_rgb[old_bbox[1]:old_bbox[3], old_bbox[0]:old_bbox[2], :]
+		self.output['f_rgb'][self.obj_id] = rgb
+
+		#update seg
+
+		#update scene depth map
+
+		#show result
+		self.show_result()
+
+	def move_down(self):
+		#update bbox
+		old_bbox = self.output['bbox'][self.obj_id].copy()
+		self.output['bbox'][self.obj_id][1] += self.move_step
+		self.output['bbox'][self.obj_id][3] += self.move_step
+		new_bbox = self.output['bbox'][self.obj_id]
+		# bbox[1] += self.move_step
+		# bbox[3] += self.move_step
+		# self.output['bbox'][self.obj_id] = bbox
+		print(old_bbox)
+		print(self.output['bbox'][self.obj_id])
+
+		#update object depth map
+		object_depth = self.output['f_depth'][self.obj_id].copy()
+		depth_map = np.zeros(np.shape(object_depth)).astype(np.uint16)
+		depth_map[new_bbox[1]:new_bbox[3], new_bbox[0]:new_bbox[2]] = \
+			object_depth[old_bbox[1]:old_bbox[3], old_bbox[0]:old_bbox[2]]
+		self.output['f_depth'][self.obj_id] = depth_map
+
+		#update object rgb????
+		object_rgb = self.output['f_rgb'][self.obj_id].copy()
+		rgb = np.zeros(np.shape(object_rgb))
+		rgb[new_bbox[1]:new_bbox[3], new_bbox[0]:new_bbox[2], :] = \
+			object_rgb[old_bbox[1]:old_bbox[3], old_bbox[0]:old_bbox[2], :]
+		self.output['f_rgb'][self.obj_id] = rgb
+
+		#update seg
+
+		#update scene depth map
+
+		#show result
+		self.show_result()
+
+	def move_left(self):
+		#update bbox
+		old_bbox = self.output['bbox'][self.obj_id].copy()
+		self.output['bbox'][self.obj_id][0] -= self.move_step
+		self.output['bbox'][self.obj_id][2] -= self.move_step
+		new_bbox = self.output['bbox'][self.obj_id]
+		# bbox[1] += self.move_step
+		# bbox[3] += self.move_step
+		# self.output['bbox'][self.obj_id] = bbox
+		print(old_bbox)
+		print(self.output['bbox'][self.obj_id])
+
+		#update object depth map
+		object_depth = self.output['f_depth'][self.obj_id].copy()
+		depth_map = np.zeros(np.shape(object_depth)).astype(np.uint16)
+		depth_map[new_bbox[1]:new_bbox[3], new_bbox[0]:new_bbox[2]] = \
+			object_depth[old_bbox[1]:old_bbox[3], old_bbox[0]:old_bbox[2]]
+		self.output['f_depth'][self.obj_id] = depth_map
+
+		#update object rgb????
+		object_rgb = self.output['f_rgb'][self.obj_id].copy()
+		rgb = np.zeros(np.shape(object_rgb))
+		rgb[new_bbox[1]:new_bbox[3], new_bbox[0]:new_bbox[2], :] = \
+			object_rgb[old_bbox[1]:old_bbox[3], old_bbox[0]:old_bbox[2], :]
+		self.output['f_rgb'][self.obj_id] = rgb
+
+		#update seg
+
+		#update scene depth map
+
+		#show result
+		self.show_result()
+
+	def move_right(self):
+		#update bbox
+		old_bbox = self.output['bbox'][self.obj_id].copy()
+		self.output['bbox'][self.obj_id][0] += self.move_step
+		self.output['bbox'][self.obj_id][2] += self.move_step
+		new_bbox = self.output['bbox'][self.obj_id]
+		# bbox[1] += self.move_step
+		# bbox[3] += self.move_step
+		# self.output['bbox'][self.obj_id] = bbox
+		print(old_bbox)
+		print(self.output['bbox'][self.obj_id])
+
+		#update object depth map
+		object_depth = self.output['f_depth'][self.obj_id].copy()
+		depth_map = np.zeros(np.shape(object_depth)).astype(np.uint16)
+		depth_map[new_bbox[1]:new_bbox[3], new_bbox[0]:new_bbox[2]] = \
+			object_depth[old_bbox[1]:old_bbox[3], old_bbox[0]:old_bbox[2]]
+		self.output['f_depth'][self.obj_id] = depth_map
+
+		#update object rgb????
+		object_rgb = self.output['f_rgb'][self.obj_id].copy()
+		rgb = np.zeros(np.shape(object_rgb))
+		rgb[new_bbox[1]:new_bbox[3], new_bbox[0]:new_bbox[2], :] = \
+			object_rgb[old_bbox[1]:old_bbox[3], old_bbox[0]:old_bbox[2], :]
+		self.output['f_rgb'][self.obj_id] = rgb
+
+		#update seg
+
+		#update scene depth map
+
+		#show result
+		self.show_result()
+
+	def zoom_in(self):
+		depth = self.output['f_depth'][self.obj_id].copy()
+		self.output['f_depth'][self.obj_id][depth[:,:] > 0] += self.zoom_step
+		self.show_result()
+
+	def zoom_out(self):
+		depth = self.output['f_depth'][self.obj_id].copy()
+		self.output['f_depth'][self.obj_id][depth[:,:] > 0] -= self.zoom_step
+		self.show_result()
