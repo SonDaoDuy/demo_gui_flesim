@@ -11,7 +11,7 @@ class ui_model(QtWidgets.QMainWindow, Ui_MainWindow):
 		# MainWindow = QtWidgets.QMainWindow()
 		self.setupUi(self)
 		self.opt = opt
-		self.opt.anno_file = 'C:\\Users\\Son\\Desktop\\demo_gui\\data\\sosc\\sosc_train.json'
+		# self.opt.anno_file = 'C:\\Users\\Son\\Desktop\\demo_gui\\data\\sosc\\sosc_train.json'
 		print(self.opt)
 		self.opt.loadSize = [512, 512]
 		self.graphicsView.setMaximumSize(self.opt.loadSize[0], self.opt.loadSize[1])
@@ -21,7 +21,7 @@ class ui_model(QtWidgets.QMainWindow, Ui_MainWindow):
 		self.graphicsView_5.setMaximumSize(self.opt.loadSize[0], self.opt.loadSize[1])
 		self.graphicsView_6.setMaximumSize(self.opt.loadSize[0], self.opt.loadSize[1])
 		# model and data info
-		self.model = self.load_model(self.opt.anno_file)
+		# self.model = self.load_model(self.opt.anno_file)
 
 		# button connection
 		# load image
